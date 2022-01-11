@@ -1,5 +1,8 @@
 const cherrio = require('cheerio');
 const axios = require('axios');
+const { PrismaClient } = require('@prisma/client');
+
+const prisma = new PrismaClient();
 
 const axiosWhitePages = axios.create({
     baseURL: 'http://paginasblancas.com.pe',
@@ -17,24 +20,38 @@ const locationSuggestions = async (query) => {
     return response.data;
 };
 
-const verifyNumber = (number) => {
-    // conexion a la base de datos
-
-    return {
-        isInvalid: true,
-        isOutService: false,
-        saysNoCall: false,
-        hasOtherProblem: false,
-    };
+const verifyNumbers = async (numbers) => {
+    const newNumbers = [];
+    for (let i = 0; i < numbers.length; i += 1) {
+        const number = numbers[i];
+        // eslint-disable-next-line no-await-in-loop
+        const phone = await prisma.phone.findUnique({
+            select: {
+                id: false,
+                isInvalid: true,
+                isOutService: true,
+                isBlacklisted: true,
+                hasOtherProblems: true,
+                createdAt: true,
+                updatedAt: true,
+            },
+            where: { number: number.phoneId },
+        });
+        if (phone) {
+            newNumbers.push({ ...number, status: phone });
+        } else {
+            newNumbers.push({ ...number, status: null });
+        }
+    }
+    return newNumbers;
 };
 
 const searchNumbers = async (query, location, sublocation = '', page = '') => {
-    // eslint-disable-next-line no-unused-vars
     const url = `http://www.paginasblancas.com.pe/persona/s/${query}/${location}${
         sublocation ? `/${sublocation}` : ''
     }${page ? `/p-${page}` : ''}`;
-    // const { data } = await axiosWhitePages.get(url);
-    const { data } = await axios.get('http://127.0.0.1:5500');
+    const { data } = await axiosWhitePages.get(url);
+    // const { data } = await axios.get('http://127.0.0.1:5500');
     const $ = cherrio.load(data);
     const results = $('.m-header--count')
         .text()
@@ -51,11 +68,13 @@ const searchNumbers = async (query, location, sublocation = '', page = '') => {
                 city: rawNumber[4],
                 phone: rawNumber[5],
                 phoneId: rawNumber[8],
-                status: verifyNumber(rawNumber[8]),
             };
             return number;
         })
         .toArray();
+
+    const numbersVerified = await verifyNumbers(numbers);
+
     const pagination = $('ul.m-results-pagination')
         .children('li')
         .map((i, el) =>
@@ -70,7 +89,7 @@ const searchNumbers = async (query, location, sublocation = '', page = '') => {
     return {
         pagination,
         results,
-        numbers,
+        numbers: numbersVerified,
     };
 };
 
